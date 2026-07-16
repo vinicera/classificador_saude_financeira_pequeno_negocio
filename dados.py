@@ -1,97 +1,168 @@
 """
 dados.py
 --------
-Este arquivo cuida só da ENTRADA e do SALVAMENTO dos dados do negócio.
-Não faz nenhum cálculo de indicador (isso é trabalho do analise.py).
+Camada de DADOS do projeto: guarda e recupera tudo no SQLite (arquivo
+data/app.db). Nenhum cálculo de indicador acontece aqui — isso é trabalho
+do analise.py. Aqui só entra e sai informação.
 
-Cada "mês" do negócio é representado por um dicionário Python, por exemplo:
-    {"mes": "Janeiro", "receita": 10000, "custos": 7000, "caixa": 4000, "divida": 2000}
+O banco tem duas tabelas:
+  - perfil       -> os dados do negócio (nome, atividade, data de abertura...)
+  - lancamentos  -> um registro por mês, com os 13 campos da especificação
+
+Usamos o sqlite3 da biblioteca padrão do Python: não precisa instalar nada
+e o banco inteiro é um único arquivo, fácil de apagar/copiar/entregar.
 """
 
-import csv
 import os
+import sqlite3
 
-CAMPOS = ["mes", "receita", "custos", "caixa", "divida"]
-ARQUIVO_HISTORICO = "historico.csv"
+# Pasta e arquivo do banco. A pasta data/ é criada automaticamente.
+PASTA_DADOS = "data"
+ARQUIVO_BANCO = os.path.join(PASTA_DADOS, "app.db")
+
+# ---------------------------------------------------------------------------
+# Descrição dos 13 campos de um lançamento mensal (seção 3.2 da especificação)
+# ---------------------------------------------------------------------------
+# Esta lista é usada em vários lugares (formulário, importação, exportação),
+# então fica definida UMA vez aqui. Cada campo tem:
+#   nome        -> como a coluna se chama no banco e no CSV/Excel
+#   rotulo      -> como aparece na tela para o usuário
+#   tipo        -> "texto", "valor" (R$), "inteiro" ou "sim_nao"
+#   obrigatorio -> True se o campo não pode ficar vazio
+CAMPOS_LANCAMENTO = [
+    {"nome": "mes",                  "rotulo": "Mês (AAAA-MM)",          "tipo": "texto",   "obrigatorio": True},
+    {"nome": "receita_total",        "rotulo": "Receita total (R$)",     "tipo": "valor",   "obrigatorio": True},
+    {"nome": "despesas_fixas",       "rotulo": "Despesas fixas (R$)",    "tipo": "valor",   "obrigatorio": True},
+    {"nome": "despesas_variaveis",   "rotulo": "Despesas variáveis (R$)","tipo": "valor",   "obrigatorio": True},
+    {"nome": "compras_mercadorias",  "rotulo": "Compras de mercadorias (R$)", "tipo": "valor", "obrigatorio": False},
+    {"nome": "saldo_caixa_final",    "rotulo": "Saldo de caixa final (R$)",   "tipo": "valor", "obrigatorio": True},
+    {"nome": "parcelas_dividas_mes", "rotulo": "Parcelas de dívidas no mês (R$)", "tipo": "valor", "obrigatorio": False},
+    {"nome": "divida_total",         "rotulo": "Dívida total (R$)",      "tipo": "valor",   "obrigatorio": False},
+    {"nome": "num_vendas",           "rotulo": "Nº de vendas",           "tipo": "inteiro", "obrigatorio": False},
+    {"nome": "num_clientes",         "rotulo": "Nº de clientes",         "tipo": "inteiro", "obrigatorio": False},
+    {"nome": "recebiveis_atrasados", "rotulo": "Recebíveis atrasados / fiado (R$)", "tipo": "valor", "obrigatorio": False},
+    {"nome": "das_pago_em_dia",      "rotulo": "DAS pago em dia?",       "tipo": "sim_nao", "obrigatorio": True},
+    {"nome": "receita_maior_cliente","rotulo": "Receita do maior cliente (R$)", "tipo": "valor", "obrigatorio": False},
+]
+
+# Só os nomes, na ordem — útil para montar CSV/Excel.
+NOMES_CAMPOS = [campo["nome"] for campo in CAMPOS_LANCAMENTO]
 
 
-def digitar_mes():
+def conectar():
     """
-    Pergunta os números de UM mês pro usuário, digitando no teclado.
-    Retorna um dicionário com os dados desse mês.
+    Abre a conexão com o banco (criando a pasta data/ se não existir).
+    row_factory = sqlite3.Row faz cada linha vir como um "dicionário",
+    permitindo acessar por nome: linha["receita_total"].
     """
-    print("\n--- Digitar dados de um novo mês ---")
-    mes = input("Nome do mês (ex: Janeiro/2026): ").strip()
-
-    # input() sempre devolve texto (str), por isso usamos float() pra
-    # transformar em número. Se a pessoa digitar algo inválido, pedimos de novo.
-    receita = pedir_numero("Receita total do mês (R$): ")
-    custos = pedir_numero("Custos totais do mês (R$): ")
-    caixa = pedir_numero("Caixa/saldo disponível (R$): ")
-    divida = pedir_numero("Dívida total atual (R$): ")
-
-    return {
-        "mes": mes,
-        "receita": receita,
-        "custos": custos,
-        "caixa": caixa,
-        "divida": divida,
-    }
+    os.makedirs(PASTA_DADOS, exist_ok=True)
+    conexao = sqlite3.connect(ARQUIVO_BANCO)
+    conexao.row_factory = sqlite3.Row
+    return conexao
 
 
-def pedir_numero(mensagem):
+def criar_tabelas():
+    """Cria as tabelas na primeira execução (se já existem, não faz nada)."""
+    with conectar() as conexao:
+        conexao.execute("""
+            CREATE TABLE IF NOT EXISTS perfil (
+                id INTEGER PRIMARY KEY CHECK (id = 1),  -- só existe 1 perfil
+                nome TEXT NOT NULL,
+                cnpj TEXT,
+                atividade TEXT NOT NULL,      -- comercio, servico ou ambos
+                data_abertura TEXT NOT NULL,  -- AAAA-MM
+                meta_anual REAL               -- meta de faturamento do ano (R$)
+            )
+        """)
+        conexao.execute("""
+            CREATE TABLE IF NOT EXISTS lancamentos (
+                mes TEXT PRIMARY KEY,         -- AAAA-MM (chave: 1 registro por mês)
+                receita_total REAL NOT NULL,
+                despesas_fixas REAL NOT NULL,
+                despesas_variaveis REAL NOT NULL,
+                compras_mercadorias REAL,     -- campos opcionais podem ser NULL
+                saldo_caixa_final REAL NOT NULL,
+                parcelas_dividas_mes REAL,
+                divida_total REAL,
+                num_vendas INTEGER,
+                num_clientes INTEGER,
+                recebiveis_atrasados REAL,
+                das_pago_em_dia INTEGER NOT NULL,  -- 1 = SIM, 0 = NÃO
+                receita_maior_cliente REAL
+            )
+        """)
+
+
+# ---------------------------------------------------------------------------
+# Perfil do negócio
+# ---------------------------------------------------------------------------
+
+def salvar_perfil(perfil):
     """
-    Fica pedindo um número até a pessoa digitar um valor válido.
-    Isso evita que o programa quebre (dê erro) se alguém digitar letras.
+    Grava (ou atualiza) o perfil do negócio.
+    Recebe um dicionário com: nome, cnpj, atividade, data_abertura, meta_anual.
+    Como o app acompanha UM negócio, o id é sempre 1 (REPLACE atualiza).
     """
-    while True:
-        texto = input(mensagem).replace(",", ".")
-        try:
-            return float(texto)
-        except ValueError:
-            print("Valor inválido, digite apenas números (ex: 1500.50).")
+    with conectar() as conexao:
+        conexao.execute(
+            """INSERT OR REPLACE INTO perfil (id, nome, cnpj, atividade, data_abertura, meta_anual)
+               VALUES (1, ?, ?, ?, ?, ?)""",
+            (perfil["nome"], perfil.get("cnpj"), perfil["atividade"],
+             perfil["data_abertura"], perfil.get("meta_anual")),
+        )
 
 
-def carregar_csv(caminho):
+def carregar_perfil():
+    """Devolve o perfil como dicionário, ou None se ainda não foi cadastrado."""
+    with conectar() as conexao:
+        linha = conexao.execute("SELECT * FROM perfil WHERE id = 1").fetchone()
+    return dict(linha) if linha else None
+
+
+# ---------------------------------------------------------------------------
+# Lançamentos mensais
+# ---------------------------------------------------------------------------
+
+def salvar_lancamento(lancamento):
     """
-    Lê um arquivo CSV com colunas: mes,receita,custos,caixa,divida
-    Retorna uma lista de dicionários, um por mês.
+    Grava um mês no banco. Se o mês já existe, substitui (assim dá pra
+    corrigir um lançamento reenviando o formulário).
+    Recebe um dicionário com os campos de CAMPOS_LANCAMENTO
+    (os opcionais podem faltar ou vir como None).
     """
-    meses = []
-    if not os.path.exists(caminho):
-        print(f"Arquivo '{caminho}' não encontrado.")
-        return meses
-
-    with open(caminho, newline="", encoding="utf-8") as arquivo:
-        leitor = csv.DictReader(arquivo)
-        for linha in leitor:
-            try:
-                meses.append({
-                    "mes": linha["mes"],
-                    "receita": float(linha["receita"]),
-                    "custos": float(linha["custos"]),
-                    "caixa": float(linha["caixa"]),
-                    "divida": float(linha["divida"]),
-                })
-            except (KeyError, ValueError):
-                print(f"Linha ignorada (dados incompletos ou inválidos): {linha}")
-    return meses
+    valores = [lancamento.get(nome) for nome in NOMES_CAMPOS]
+    marcadores = ", ".join(["?"] * len(NOMES_CAMPOS))
+    colunas = ", ".join(NOMES_CAMPOS)
+    with conectar() as conexao:
+        conexao.execute(
+            f"INSERT OR REPLACE INTO lancamentos ({colunas}) VALUES ({marcadores})",
+            valores,
+        )
 
 
-def salvar_historico(meses, caminho=ARQUIVO_HISTORICO):
+def carregar_lancamentos():
     """
-    Salva a lista de meses num CSV local, para não perder os dados
-    quando o programa for fechado (isso é o "Passo 8: Salvar" do fluxo original).
+    Devolve TODOS os meses lançados, em ordem cronológica, como lista de
+    dicionários. A ordem funciona porque o formato AAAA-MM ordena certo
+    como texto ("2026-02" < "2026-10").
     """
-    with open(caminho, "w", newline="", encoding="utf-8") as arquivo:
-        escritor = csv.DictWriter(arquivo, fieldnames=CAMPOS)
-        escritor.writeheader()
-        for mes in meses:
-            escritor.writerow(mes)
+    with conectar() as conexao:
+        linhas = conexao.execute("SELECT * FROM lancamentos ORDER BY mes").fetchall()
+    return [dict(linha) for linha in linhas]
 
 
-def carregar_historico(caminho=ARQUIVO_HISTORICO):
-    """Carrega o histórico salvo em execuções anteriores, se existir."""
-    if os.path.exists(caminho):
-        return carregar_csv(caminho)
-    return []
+def excluir_lancamento(mes):
+    """Apaga o lançamento de um mês específico (formato AAAA-MM)."""
+    with conectar() as conexao:
+        conexao.execute("DELETE FROM lancamentos WHERE mes = ?", (mes,))
+
+
+def apagar_todos_lancamentos():
+    """Apaga todos os lançamentos (usado ao carregar o modo demo)."""
+    with conectar() as conexao:
+        conexao.execute("DELETE FROM lancamentos")
+
+
+# Garante que as tabelas existem assim que o módulo é importado,
+# para nenhuma outra parte do código precisar se preocupar com isso.
+criar_tabelas()

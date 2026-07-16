@@ -1,0 +1,10 @@
+# Dependências do Saúde MEI — instalar com: pip install -r requirements.txt
+flask           # servidor web e rotas das telas
+pyyaml          # leitura do config.yaml
+pandas          # manipulação de tabelas (import/export e ML)
+scikit-learn    # os modelos de machine learning (Random Forest, regressões)
+joblib          # salvar/carregar os modelos treinados em modelos/
+openpyxl        # ler e gerar arquivos Excel (.xlsx)
+matplotlib      # gráficos do relatório PDF e do notebook
+reportlab       # montagem do relatório PDF
+notebook        # para abrir/rodar o notebooks/metodologia_e_treino.ipynb

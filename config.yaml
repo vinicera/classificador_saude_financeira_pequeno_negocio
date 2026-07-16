@@ -1,0 +1,100 @@
+# ============================================================================
+# config.yaml — parâmetros do Saúde MEI
+# ----------------------------------------------------------------------------
+# Tudo o que é "número de negócio" fica aqui, fora do código Python.
+# Assim dá pra ajustar pesos, faixas e o limite do MEI sem mexer em lógica.
+# Este arquivo é lido por score.py, alertas.py e analise.py.
+# ============================================================================
+
+# ---------------------------------------------------------------------------
+# Regras do regime MEI
+# ---------------------------------------------------------------------------
+mei:
+  # Limite de faturamento anual (receita bruta). Vigente desde 2018.
+  # ATENÇÃO: há projeto de lei (jun/2026) para elevar a R$ 110 mil em 2027
+  # e R$ 140 mil em 2028 — por isso o valor fica parametrizado aqui.
+  limite_anual: 81000
+
+  # Tolerância de 20%: faturando até limite × (1 + 0.20) o MEI paga DAS
+  # complementar e só migra para ME em janeiro. Acima disso o
+  # desenquadramento é retroativo (impostos + multas).
+  tolerancia: 0.20
+
+# ---------------------------------------------------------------------------
+# Pesos do Score de Saúde (soma = 100)
+# ---------------------------------------------------------------------------
+# Cada indicador vira uma nota de 0 a 100 (ver "faixas" abaixo) e o score
+# final é a média ponderada com estes pesos. Se um indicador não puder ser
+# calculado (dado opcional não preenchido), o peso dele é redistribuído
+# entre os demais.
+pesos:
+  margem_liquida: 20        # lucro é o que sustenta o negócio no longo prazo
+  runway_meses: 20          # caixa é o que sustenta o negócio no curto prazo
+  crescimento_receita: 15   # receita caindo é o primeiro sinal de problema
+  comprometimento_dividas: 15  # parcelas altas "comem" o lucro futuro
+  uso_limite_mei: 10        # estourar o limite = risco de desenquadramento
+  inadimplencia: 10         # fiado atrasado é dinheiro que talvez não volte
+  concentracao_clientes: 5  # depender de 1 cliente grande é frágil
+  regularidade_das: 5       # DAS em dia evita multa e exclusão do regime
+
+# ---------------------------------------------------------------------------
+# Faixas de normalização de cada indicador
+# ---------------------------------------------------------------------------
+# Cada indicador é convertido para uma nota 0–100 por interpolação linear:
+#   valor igual a "pessimo"  -> nota 0
+#   valor igual a "otimo"    -> nota 100
+#   valores no meio          -> proporcional (regra de três)
+# Repare que em alguns indicadores "menor é melhor" (ex.: dívidas): nesses
+# casos o "pessimo" é o número ALTO e o "otimo" é o número BAIXO — a mesma
+# fórmula de interpolação resolve os dois sentidos.
+faixas:
+  margem_liquida:            # (receita - despesas) / receita; saudável >= 15%
+    pessimo: -0.15
+    otimo: 0.30
+  crescimento_receita:       # variação da média móvel de 3 meses; saudável >= 0%
+    pessimo: -0.20
+    otimo: 0.20
+  runway_meses:              # saldo de caixa / despesa média mensal; saudável >= 3
+    pessimo: 0.0
+    otimo: 6.0
+  comprometimento_dividas:   # parcelas do mês / receita; saudável <= 20%
+    pessimo: 0.50
+    otimo: 0.0
+  uso_limite_mei:            # receita acumulada no ano / limite proporcional; saudável <= 80%
+    pessimo: 1.10
+    otimo: 0.50
+  inadimplencia:             # recebíveis atrasados / receita; saudável <= 5%
+    pessimo: 0.20
+    otimo: 0.0
+  concentracao_clientes:     # receita do maior cliente / receita; saudável <= 40%
+    pessimo: 0.80
+    otimo: 0.20
+  regularidade_das:          # meses com DAS pago em dia / meses lançados; saudável = 100%
+    pessimo: 0.0
+    otimo: 1.0
+
+# ---------------------------------------------------------------------------
+# Classes do semáforo (aplicadas sobre o score 0–100)
+# ---------------------------------------------------------------------------
+classes:
+  saudavel: 75   # score >= 75  -> 🟢 Saudável
+  atencao: 50    # score >= 50  -> 🟡 Atenção
+  alerta: 25     # score >= 25  -> 🟠 Alerta
+                 # score <  25  -> 🔴 Crítico
+
+# ---------------------------------------------------------------------------
+# Gatilhos dos alertas (seção 3.5 da especificação)
+# ---------------------------------------------------------------------------
+alertas:
+  uso_limite_maximo: 0.80        # uso do limite MEI >= 80% -> risco de desenquadramento
+  runway_minimo: 2.0             # fôlego de caixa < 2 meses -> caixa crítico
+  meses_queda_receita: 3         # receita caindo há 3 meses seguidos
+  compras_receita_maximo: 0.80   # compras > 80% da receita -> atenção fiscal
+  queda_score_previsao: 15       # previsão de score caindo >= 15 pontos
+
+# ---------------------------------------------------------------------------
+# Previsão (ia_analise.py)
+# ---------------------------------------------------------------------------
+previsao:
+  minimo_meses: 4       # com menos que isso, mostramos "dados insuficientes"
+  meses_a_frente: 6     # horizonte da projeção (3 a 6 meses)

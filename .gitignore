@@ -1,3 +1,13 @@
+# Lixo do Python
 __pycache__/
 *.pyc
-historico.csv
+
+# Configuração local da ferramenta de IA usada no desenvolvimento
+.claude/
+
+# Dados locais do usuário e artefatos gerados — NÃO subir para o GitHub.
+# Tudo aqui é recriável: data/ é gerada pelo app, modelos/ pelo treinar.py.
+data/
+modelos/
+.ipynb_checkpoints/
+uploads/
