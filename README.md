@@ -1,4 +1,4 @@
-# 💼 Saúde MEI — Diagnóstico Inteligente do Negócio
+# Saúde MEI — Diagnóstico Inteligente do Negócio
 
 Sistema que avalia a **saúde financeira de um MEI** a partir dos números que o próprio
 microempreendedor tem na mão (vendas, despesas, caixa, dívidas, DAS...):
